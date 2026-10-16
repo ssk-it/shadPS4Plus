@@ -379,7 +379,12 @@ bool IOFile::Seek(s64 offset, SeekOrigin origin) const {
 
     errno = 0;
 
+#ifdef __APPLE__
+    // off_t is already 64-bit on macOS, which has no fseeko64
+    const auto seek_result = fseeko(file, offset, ToSeekOrigin(origin)) == 0;
+#else
     const auto seek_result = fseeko64(file, offset, ToSeekOrigin(origin)) == 0;
+#endif
 
     if (!seek_result) {
         const auto ec = std::error_code{errno, std::generic_category()};

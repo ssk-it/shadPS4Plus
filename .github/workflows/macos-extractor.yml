@@ -1,0 +1,46 @@
+name: macOS extractor build
+
+on: [push, pull_request, workflow_dispatch]
+
+concurrency:
+  group: macos-extractor-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Same image as the macOS jobs in build.yml (Apple Silicon).
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Crypto++ is the only submodule pkg_extractor needs.
+      - name: Fetch Crypto++
+        run: git submodule update --init --depth 1 externals/cryptopp
+
+      - name: Build Crypto++
+        run: |
+          make -C externals/cryptopp -j"$(sysctl -n hw.ncpu)" libcryptopp.a
+          mkdir -p extractor/build/cryptopp/cryptopp
+          cp externals/cryptopp/libcryptopp.a extractor/build/cryptopp/cryptopp/
+
+      # extractor/CMakeLists.txt requires zlib 1.3; macOS only ships 1.2.
+      # CMAKE_PREFIX_PATH rather than ZLIB_ROOT, which cmake_minimum_required(3.5)
+      # makes CMake ignore (policy CMP0074).
+      - name: Configure
+        run: |
+          brew install zlib
+          cmake -S extractor -B extractor/build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix zlib)"
+
+      - name: Build
+        run: cmake --build extractor/build --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Smoke test
+        run: |
+          echo "not a pkg" > "$RUNNER_TEMP/not-a-pkg.pkg"
+          output="$(extractor/build/pkg_extractor "$RUNNER_TEMP/not-a-pkg.pkg" "$RUNNER_TEMP/out")"
+          echo "$output"
+          grep -q "doesn't appear to be a valid PKG file" <<< "$output"
